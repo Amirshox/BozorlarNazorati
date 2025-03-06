@@ -17,7 +17,7 @@ services:
       context: backend/
       dockerfile: Dockerfile
     ports:
-      - "8408:8008"
+      - "8508:8008"
     depends_on:
       - mongo
       - redis
@@ -95,7 +95,7 @@ services:
       - postgresql
     command: bash -c "uvicorn main:app --host 0.0.0.0 --port 8010  --ws-ping-interval 1200 --ws-ping-timeout 1200"
     ports:
-      - "8470:8010"
+      - "8570:8010"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.scamera-bz.rule=Host(`scamera-bz.realsoft.ai`)"
@@ -125,7 +125,7 @@ services:
       - minio-ssd
       - postgresql
     ports:
-      - "8411:8011"
+      - "8511:8011"
     networks:
       - bz_network
     labels:
@@ -150,7 +150,7 @@ services:
     hostname: postgresql
     shm_size: '1gb'
     ports:
-      - "8432:5432"
+      - "8532:5432"
     volumes:
       - /data/minio_ssd/one_system_bz/db_volume:/var/lib/postgresql/data/
     labels:
@@ -168,8 +168,8 @@ services:
     image: rabbitmq:3-management
     hostname: rabbitmq
     ports:
-      - '8672:5672'
-      - '18672:15672'
+      - '8572:5672'
+      - '18572:15672'
     labels:
       - "traefik.enable=false"
     environment:
@@ -185,8 +185,8 @@ services:
     image: minio/minio
     hostname: minio-hdd
     ports:
-      - '8800:9000'
-      - '8890:9090'
+      - '8850:9000'
+      - '8895:9090'
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: trateitere
@@ -215,8 +215,8 @@ services:
     image: minio/minio
     hostname: minio-ssd
     ports:
-      - '8900:9000'
-      - '8990:9090'
+      - '8950:9000'
+      - '8995:9090'
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: actrasyche
@@ -246,7 +246,7 @@ services:
     labels:
       - "traefik.enable=false"
     ports:
-      - "8379:6379"
+      - "8579:6379"
     volumes:
       - /data/minio_ssd/one_system_bz/redis_volume:/data
     hostname: redis
@@ -258,7 +258,7 @@ services:
     container_name: bz_hls
     image: "roverr/rtsp-stream:2"
     ports:
-      - "8880:8080"
+      - "8580:8080"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.hls-bz.rule=Host(`hls-bz.realsoft.ai`)"
@@ -277,8 +277,8 @@ services:
     container_name: bz_srs
     image: ossrs/srs:5
     ports:
-      - "8935:1935"  # RTMP
-      - "8980:8080"  # HTTP
+      - "8535:1935"  # RTMP
+      - "8985:8080"  # HTTP
     command: ./objs/srs -c conf/hls.conf
     restart: unless-stopped
     labels:
@@ -304,7 +304,7 @@ services:
     labels:
       - "traefik.enable=false"
     ports:
-      - '28017:27017'
+      - '28517:27017'
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: pheritlens
