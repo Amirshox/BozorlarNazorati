@@ -19,7 +19,6 @@ from celery.exceptions import TaskError
 from celery.schedules import crontab
 from celery.signals import worker_process_init, worker_process_shutdown
 from celery_batches import Batches
-from elasticsearch import Elasticsearch
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from minio import Minio, S3Error
@@ -55,12 +54,6 @@ from models import (
     WantedSmartCamera,
 )
 from models.identity import Package, RelativeSmartCamera
-from models.similarity import (
-    SimilarityAttendancePhotoInArea,
-    SimilarityAttendancePhotoInEntity,
-    SimilarityMainPhotoInArea,
-    SimilarityMainPhotoInEntity,
-)
 from schemas.identity import RelativeBase
 from utils.image_processing import (
     MINIO_HOST,
@@ -133,7 +126,6 @@ batch_attendance_basic_auth = {"Authorization": "Basic cmVhbHNvZnRhaTpyZWFsc29md
 logger = logging.getLogger(__name__)
 
 gc.enable()
-elastic_client = None
 minio_client: Minio = get_minio_client()
 minio_ssd_client: Minio = get_minio_ssd_client()
 mongo_client = None
@@ -547,16 +539,16 @@ def add_identity_by_task(self, tenant_entity_id: int, smart_camera_id: int):
 
 @app.task(bind=True, base=EventDrivenTask, max_retries=10)
 def notify_integrator(
-    self,
-    module_id: int,
-    module_name: str,
-    data: dict,
-    callback_url: str,
-    auth_type: Optional[str],
-    username: Optional[str] = None,
-    password: Optional[str] = None,
-    token: Optional[str] = None,
-    token_type: Optional[str] = None,
+        self,
+        module_id: int,
+        module_name: str,
+        data: dict,
+        callback_url: str,
+        auth_type: Optional[str],
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        token: Optional[str] = None,
+        token_type: Optional[str] = None,
 ):
     message_id = self.request.id  # Task ID
     payload = {"message_id": message_id, "module_id": module_id, "module_name": module_name, "data": data}
@@ -596,17 +588,17 @@ def send_attendance_to_websocket(self, attendance_id: int, tenant_entity_id: int
 
 @app.task(bind=True, base=DatabaseTask, max_retries=10)
 def add_identity_to_camera(
-    self,
-    identity_id: int,
-    identity_first_name: str,
-    identity_photo: str,
-    identity_version: int,
-    identity_group: int,
-    camera_id: int,
-    camera_device_id: str,
-    camera_password: str,
-    tenant_id: int,
-    tenant_entity_id: int,
+        self,
+        identity_id: int,
+        identity_first_name: str,
+        identity_photo: str,
+        identity_version: int,
+        identity_group: int,
+        camera_id: int,
+        camera_device_id: str,
+        camera_password: str,
+        tenant_id: int,
+        tenant_entity_id: int,
 ):
     db = self.get_db()
     integration = db.query(Integrations).filter_by(tenant_id=tenant_id, module_id=1).first()
@@ -749,16 +741,16 @@ def add_identity_to_camera(
 
 @app.task(bind=True, base=DatabaseTask, max_retries=10)
 def delete_identity_from_smart_camera(
-    self,
-    identity_id: int,
-    identity_first_name: str,
-    identity_version: int,
-    identity_group: int,
-    camera_id: int,
-    camera_device_id: str,
-    camera_password: str,
-    tenant_id: int,
-    tenant_entity_id: int,
+        self,
+        identity_id: int,
+        identity_first_name: str,
+        identity_version: int,
+        identity_group: int,
+        camera_id: int,
+        camera_device_id: str,
+        camera_password: str,
+        tenant_id: int,
+        tenant_entity_id: int,
 ):
     db = self.get_db()
     integration = db.query(Integrations).filter_by(tenant_id=tenant_id, module_id=1).first()
@@ -854,16 +846,16 @@ def delete_identity_from_smart_camera(
 
 @app.task(bind=True, base=DatabaseTask, max_retries=10)
 def add_wanted_to_smart_camera(
-    self,
-    wanted_id: int,
-    wanted_first_name: str,
-    wanted_photo: str,
-    concern_level: int,
-    accusation: str,
-    camera_id: int,
-    camera_device_id: str,
-    camera_password: str,
-    tenant_entity_id: int,
+        self,
+        wanted_id: int,
+        wanted_first_name: str,
+        wanted_photo: str,
+        concern_level: int,
+        accusation: str,
+        camera_id: int,
+        camera_device_id: str,
+        camera_password: str,
+        tenant_entity_id: int,
 ):
     db = self.get_db()
     try:
@@ -1019,7 +1011,7 @@ def child_implementation_task(self, relative_id: int, data: list):
 
 @app.task(bind=True, base=DatabaseTask, max_retries=3)
 def send_attendance_to_platon_task(
-    self, tenant_id: int, mtt_id: int, tenant_entity_id: int, identity_group: int, date: str
+        self, tenant_id: int, mtt_id: int, tenant_entity_id: int, identity_group: int, date: str
 ):
     db = self.get_db()
     _date = datetime.strptime(date, "%Y-%m-%d")
@@ -1068,7 +1060,7 @@ def send_attendance_to_platon_task(
             data.append(item)
     for i in range(0, len(data), 15):
         print(i, 15)
-        chunk = data[i : i + 15]
+        chunk = data[i: i + 15]
         start_time = datetime.now()
         r = requests.post(
             url="https://mq.nodavlat-bogcha.uz/api/call/v4/kindergartens/kids_visits_batch",
@@ -1234,7 +1226,7 @@ def send_identity_photo_history(self, data: dict):
 
 @app.task(bind=True, base=DatabaseTask)
 def send_attendance_by_identity_task(
-    self, mtt_id: int, identity_id: int, external_id: str, start_str: str, end_str: str
+        self, mtt_id: int, identity_id: int, external_id: str, start_str: str, end_str: str
 ):
     start_time = datetime.strptime(start_str, "%Y-%m-%dT%H:%M:%S")
     end_time = datetime.strptime(end_str, "%Y-%m-%dT%H:%M:%S")
@@ -1485,412 +1477,6 @@ def send_attendance_leftovers_to_platon_task(self, tenant_id: int, mtt_id: int, 
         raise self.retry(exc=e, countdown=600) from e
 
 
-@app.task(bind=True, base=DatabaseTask, queue="similarity_main_photo_queue")
-def check_similarity_main_photo(
-    self, identity_id: int, image_url: str, embedding512: list, created_at: str, lat: float, lon: float, version: int
-):
-    embedding512 = embedding512[0]
-    existing_doc = elastic_client.get(index="similarity_main_photo", id=identity_id, ignore=[404])
-
-    if existing_doc and existing_doc.get("_source"):
-        elastic_client.update(
-            index="similarity_main_photo",
-            id=identity_id,
-            body={
-                "doc": {
-                    "embedding": embedding512,
-                    "image_url": image_url,
-                    "version": version,
-                    "location": {"lat": lat, "lon": lon},
-                    "updated_at": datetime.now().isoformat(),
-                    "created_at": created_at,
-                }
-            },
-        )
-    else:
-        elastic_client.index(
-            index="similarity_main_photo",
-            body={
-                "identity_id": identity_id,
-                "embedding": embedding512,
-                "image_url": image_url,
-                "version": version,
-                "location": {"lat": lat, "lon": lon},
-                "created_at": created_at,
-                "updated_at": datetime.now().isoformat(),
-            },
-            id=identity_id,
-        )
-
-    radius = 20_000  # 20km
-
-    try:
-        res = elastic_client.search(
-            index="similarity_main_photo",
-            body={
-                "query": {
-                    "script_score": {
-                        "query": {
-                            "bool": {
-                                "filter": {
-                                    "geo_distance": {"distance": f"{radius}m", "location": {"lat": lat, "lon": lon}}
-                                },
-                                "must_not": {"match": {"_id": identity_id}},
-                            }
-                        },
-                        "script": {
-                            "source": "1 / (1 + l2norm(params.queryVector, 'embedding'))",  # Euclidean distance
-                            "params": {"queryVector": embedding512},
-                        },
-                    }
-                },
-                "min_score": 0.3,
-            },
-        )
-    except Exception as e:
-        print(f"Error: {e}")
-        res = {"hits": {"hits": []}}
-
-    hits = res["hits"]["hits"]
-    similar = []
-    for hit in hits:
-        hit["_source"].pop("embedding")
-        hit["_source"]["distance"] = 1 - hit["_score"]
-        similar.append(hit["_source"])
-    del embedding512
-    db = self.get_db()
-    bulk_mappings = []
-    for s in similar:
-        bulk_mappings.append(
-            {
-                "identity_id": identity_id,
-                "image_url": image_url,
-                "version": version,
-                "similar_identity_id": s["identity_id"],
-                "similar_image_url": s["image_url"],
-                "similar_version": s["version"],
-                "distance": round(s["distance"], 3),
-            }
-        )
-    db.bulk_insert_mappings(SimilarityMainPhotoInArea, bulk_mappings)
-    db.commit()
-    db.close()
-
-
-@app.task(bind=True, base=DatabaseTask, queue="similarity_main_photo_in_entity_queue")
-def check_similarity_main_photo_in_entity(
-    self,
-    identity_id: int,
-    tenant_entity_id: int,
-    image_url: str,
-    embedding512: list,
-    created_at: str,
-    lat: float,
-    lon: float,
-    version: int,
-):
-    embedding512 = embedding512[0]
-    existing_doc = elastic_client.get(index="similarity_main_photo_in_entity", id=identity_id, ignore=[404])
-
-    if existing_doc and existing_doc.get("_source"):
-        elastic_client.update(
-            index="similarity_main_photo_in_entity",
-            id=identity_id,
-            body={
-                "doc": {
-                    "tenant_entity_id": tenant_entity_id,
-                    "embedding": embedding512,
-                    "image_url": image_url,
-                    "version": version,
-                    "location": {"lat": lat, "lon": lon},
-                    "updated_at": datetime.now().isoformat(),
-                    "created_at": created_at,
-                }
-            },
-        )
-    else:
-        elastic_client.index(
-            index="similarity_main_photo_in_entity",
-            body={
-                "identity_id": identity_id,
-                "tenant_entity_id": tenant_entity_id,
-                "embedding": embedding512,
-                "image_url": image_url,
-                "version": version,
-                "location": {"lat": lat, "lon": lon},
-                "created_at": created_at,
-                "updated_at": datetime.now().isoformat(),
-            },
-            id=identity_id,
-        )
-
-    radius = 20_000  # 20km
-
-    try:
-        res = elastic_client.search(
-            index="similarity_main_photo_in_entity",
-            body={
-                "query": {
-                    "script_score": {
-                        "query": {
-                            "bool": {
-                                "filter": {
-                                    "geo_distance": {"distance": f"{radius}m", "location": {"lat": lat, "lon": lon}}
-                                },
-                                "must_not": {"match": {"_id": identity_id}},
-                                "must": {"match": {"tenant_entity_id": tenant_entity_id}},
-                            }
-                        },
-                        "script": {
-                            "source": "1 / (1 + l2norm(params.queryVector, 'embedding'))",  # Euclidean distance
-                            "params": {"queryVector": embedding512},
-                        },
-                    }
-                },
-                "min_score": 0.5,
-            },
-        )
-    except Exception as e:
-        print(f"Error: {e}")
-        res = {"hits": {"hits": []}}
-
-    hits = res["hits"]["hits"]
-    similar = []
-    for hit in hits:
-        hit["_source"].pop("embedding")
-        hit["_source"]["distance"] = 1 - hit["_score"]
-        similar.append(hit["_source"])
-    del embedding512
-    db = self.get_db()
-    bulk_mappings = []
-    for s in similar:
-        bulk_mappings.append(
-            {
-                "identity_id": identity_id,
-                "tenant_entity_id": tenant_entity_id,
-                "image_url": image_url,
-                "version": version,
-                "similar_identity_id": s["identity_id"],
-                "similar_tenant_entity_id": s["tenant_entity_id"],
-                "similar_image_url": s["image_url"],
-                "similar_version": s["version"],
-                "distance": round(s["distance"], 3),
-            }
-        )
-    db.bulk_insert_mappings(SimilarityMainPhotoInEntity, bulk_mappings)
-    db.commit()
-    db.close()
-
-
-@app.task(bind=True, base=DatabaseTask, queue="similarity_attendance_photo_queue")
-def check_similarity_attendance_photo(
-    self,
-    identity_id: int,
-    attendance_id: int,
-    image_url: str,
-    embedding512: list,
-    created_at: str,
-    lat: float,
-    lon: float,
-    timestamp: int,
-):
-    embedding512 = embedding512[0]
-    existing_doc = elastic_client.get(index="similarity_attendance_photo", id=identity_id, ignore=[404])
-
-    if existing_doc and existing_doc.get("_source"):
-        elastic_client.update(
-            index="similarity_attendance_photo",
-            id=identity_id,
-            body={
-                "doc": {
-                    "attendance_id": attendance_id,
-                    "embedding": embedding512,
-                    "image_url": image_url,
-                    "location": {"lat": lat, "lon": lon},
-                    "created_at": created_at,
-                    "updated_at": datetime.now().isoformat(),
-                }
-            },
-        )
-    else:
-        elastic_client.index(
-            index="similarity_attendance_photo",
-            body={
-                "identity_id": identity_id,
-                "attendance_id": attendance_id,
-                "embedding": embedding512,
-                "image_url": image_url,
-                "location": {"lat": lat, "lon": lon},
-                "created_at": created_at,
-                "updated_at": datetime.now().isoformat(),
-            },
-            id=identity_id,
-        )
-
-    radius = 20_000  # 20km
-
-    try:
-        res = elastic_client.search(
-            index="similarity_attendance_photo",
-            body={
-                "query": {
-                    "script_score": {
-                        "query": {
-                            "bool": {
-                                "filter": {
-                                    "geo_distance": {"distance": f"{radius}m", "location": {"lat": lat, "lon": lon}}
-                                },
-                                "must_not": {"match": {"_id": identity_id}},
-                            }
-                        },
-                        "script": {
-                            "source": "1 / (1 + l2norm(params.queryVector, 'embedding'))",  # Euclidean distance
-                            "params": {"queryVector": embedding512},
-                        },
-                    }
-                },
-                "min_score": 0.3,
-            },
-        )
-    except Exception as e:
-        print(f"Error: {e}")
-        res = {"hits": {"hits": []}}
-
-    hits = res["hits"]["hits"]
-    similar = []
-    for hit in hits:
-        hit["_source"].pop("embedding")
-        hit["_source"]["distance"] = 1 - hit["_score"]
-        similar.append(hit["_source"])
-    del embedding512
-    db = self.get_db()
-    if similar and len(similar) > 0:
-        attendance = db.query(Attendance).filter_by(id=attendance_id, is_active=True).first()
-        attendance.has_warning = True
-        db.commit()
-        for similarity in similar:
-            new_similarity = SimilarityAttendancePhotoInArea(
-                identity_id=identity_id,
-                attendance_id=attendance_id,
-                image_url=image_url,
-                capture_timestamp=timestamp,
-                similar_attendance_id=similarity["attendance_id"],
-                similar_image_url=similarity["image_url"],
-                similar_capture_timestamp=int(datetime.fromisoformat(similarity["created_at"]).timestamp()),
-                distance=round(similarity["distance"], 3),
-            )
-            db.add(new_similarity)
-            db.commit()
-    db.close()
-
-
-@app.task(bind=True, base=DatabaseTask, queue="similarity_attendance_photo_in_entity_queue")
-def check_similarity_attendance_photo_in_entity(
-    self,
-    identity_id: int,
-    tenant_entity_id: int,
-    attendance_id: int,
-    image_url: str,
-    embedding512: list,
-    created_at: str,
-    lat: float,
-    lon: float,
-    timestamp: int,
-):
-    embedding512 = embedding512[0]
-    existing_doc = elastic_client.get(index="similarity_attendance_photo_in_entity", id=identity_id, ignore=[404])
-
-    if existing_doc and existing_doc.get("_source"):
-        elastic_client.update(
-            index="similarity_attendance_photo_in_entity",
-            id=identity_id,
-            body={
-                "doc": {
-                    "tenant_entity_id": tenant_entity_id,
-                    "attendance_id": attendance_id,
-                    "embedding": embedding512,
-                    "image_url": image_url,
-                    "location": {"lat": lat, "lon": lon},
-                    "created_at": created_at,
-                    "updated_at": datetime.now().isoformat(),
-                }
-            },
-        )
-    else:
-        elastic_client.index(
-            index="similarity_attendance_photo_in_entity",
-            body={
-                "identity_id": identity_id,
-                "tenant_entity_id": tenant_entity_id,
-                "attendance_id": attendance_id,
-                "embedding": embedding512,
-                "image_url": image_url,
-                "location": {"lat": lat, "lon": lon},
-                "created_at": created_at,
-                "updated_at": datetime.now().isoformat(),
-            },
-            id=identity_id,
-        )
-
-    radius = 20_000  # 20km
-
-    try:
-        res = elastic_client.search(
-            index="similarity_attendance_photo_in_entity",
-            body={
-                "query": {
-                    "script_score": {
-                        "query": {
-                            "bool": {
-                                "filter": {
-                                    "geo_distance": {"distance": f"{radius}m", "location": {"lat": lat, "lon": lon}}
-                                },
-                                "must_not": {"match": {"_id": identity_id}},
-                                "must": {"match": {"tenant_entity_id": tenant_entity_id}},
-                            }
-                        },
-                        "script": {
-                            "source": "1 / (1 + l2norm(params.queryVector, 'embedding'))",  # Euclidean distance
-                            "params": {"queryVector": embedding512},
-                        },
-                    }
-                },
-                "min_score": 0.5,
-            },
-        )
-    except Exception as e:
-        print(f"Error: {e}")
-        res = {"hits": {"hits": []}}
-
-    hits = res["hits"]["hits"]
-    similar = []
-    for hit in hits:
-        hit["_source"].pop("embedding")
-        hit["_source"]["distance"] = 1 - hit["_score"]
-        similar.append(hit["_source"])
-    del embedding512
-    db = self.get_db()
-    if similar and len(similar) > 0:
-        attendance = db.query(Attendance).filter_by(id=attendance_id, is_active=True).first()
-        attendance.has_warning = True
-        db.commit()
-        for similarity in similar:
-            new_similarity = SimilarityAttendancePhotoInEntity(
-                identity_id=identity_id,
-                tenant_entity_id=tenant_entity_id,
-                attendance_id=attendance_id,
-                image_url=image_url,
-                capture_timestamp=timestamp,
-                similar_attendance_id=similarity["attendance_id"],
-                similar_image_url=similarity["image_url"],
-                similar_capture_timestamp=int(datetime.fromisoformat(similarity["created_at"]).timestamp()),
-                distance=round(similarity["distance"], 3),
-            )
-            db.add(new_similarity)
-            db.commit()
-    db.close()
-
-
 class DatabaseBatchTask(DatabaseTask, Batches):
     """
     A custom base class that merges:
@@ -2067,7 +1653,6 @@ def spoofing_check_task(self, _tasks: list):
 def init_worker(**kwargs):
     MONGO_DB_URL = os.environ.get("MONGODB_URL")
     TRITON_URL = os.environ.get("TRITON_URL")
-    ELASTIC_SEARCH_URL = os.environ.get("ELASTIC_SEARCH_URL")
 
     global triton_client
     triton_client = grpcclient.InferenceServerClient(url=TRITON_URL, verbose=False)
@@ -2078,99 +1663,9 @@ def init_worker(**kwargs):
 
     mongo_client = MongoClient(MONGO_DB_URL)
 
-    global elastic_client
-
-    elastic_client = Elasticsearch(ELASTIC_SEARCH_URL, verify_certs=False)
-
-    similarity_main_photo_mapping = {
-        "mappings": {
-            "properties": {
-                "identity_id": {"type": "keyword"},
-                "embedding": {
-                    "type": "dense_vector",
-                    "dims": 512,
-                },
-                "image_url": {"type": "keyword"},
-                "version": {"type": "keyword"},
-                "location": {"type": "geo_point"},
-                "created_at": {"type": "date"},
-                "updated_at": {"type": "date"},
-            }
-        }
-    }
-
-    if not elastic_client.indices.exists(index="similarity_main_photo"):
-        elastic_client.indices.create(index="similarity_main_photo", body=similarity_main_photo_mapping)
-
-    similarity_main_photo_in_entity_mapping = {
-        "mappings": {
-            "properties": {
-                "identity_id": {"type": "keyword"},
-                "tenant_entity_id": {"type": "keyword"},
-                "embedding": {
-                    "type": "dense_vector",
-                    "dims": 512,
-                },
-                "image_url": {"type": "keyword"},
-                "version": {"type": "keyword"},
-                "location": {"type": "geo_point"},
-                "created_at": {"type": "date"},
-                "updated_at": {"type": "date"},
-            }
-        }
-    }
-
-    if not elastic_client.indices.exists(index="similarity_main_photo_in_entity"):
-        elastic_client.indices.create(
-            index="similarity_main_photo_in_entity", body=similarity_main_photo_in_entity_mapping
-        )
-
-    similarity_attendance_photo_mapping = {
-        "mappings": {
-            "properties": {
-                "identity_id": {"type": "keyword"},
-                "attendance_id": {"type": "keyword"},
-                "embedding": {
-                    "type": "dense_vector",
-                    "dims": 512,
-                },
-                "image_url": {"type": "keyword"},
-                "location": {"type": "geo_point"},
-                "created_at": {"type": "date"},
-                "updated_at": {"type": "date"},
-            }
-        }
-    }
-    if not elastic_client.indices.exists(index="similarity_attendance_photo"):
-        elastic_client.indices.create(index="similarity_attendance_photo", body=similarity_attendance_photo_mapping)
-
-    similarity_attendance_photo_in_entity_mapping = {
-        "mappings": {
-            "properties": {
-                "identity_id": {"type": "keyword"},
-                "tenant_entity_id": {"type": "keyword"},
-                "attendance_id": {"type": "keyword"},
-                "embedding": {
-                    "type": "dense_vector",
-                    "dims": 512,
-                },
-                "image_url": {"type": "keyword"},
-                "location": {"type": "geo_point"},
-                "created_at": {"type": "date"},
-                "updated_at": {"type": "date"},
-            }
-        }
-    }
-    if not elastic_client.indices.exists(index="similarity_attendance_photo_in_entity"):
-        elastic_client.indices.create(
-            index="similarity_attendance_photo_in_entity", body=similarity_attendance_photo_in_entity_mapping
-        )
-
 
 @worker_process_shutdown.connect
 def shutdown_worker(**kwargs):
     global mongo_client
     print("Closing database connection for worker.")
     mongo_client.close()
-    global elastic_client
-    elastic_client.transport.close()

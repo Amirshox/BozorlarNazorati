@@ -16,7 +16,6 @@ cryptography==42.0.5
 distlib==0.3.8
 dnspython==2.6.1
 ecdsa==0.18.0
-elasticsearch==7.17.0
 fastapi==0.109.2
 filelock==3.13.1
 greenlet==3.0.3
