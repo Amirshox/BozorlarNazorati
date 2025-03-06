@@ -1,0 +1,25 @@
+services:
+  frontend:
+    container_name: bz_frontend
+    build:
+      context: BozorlarNazoratiFront/
+      dockerfile: Dockerfile
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.bz.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.bz.rule=Host(`bz.realsoft.ai`)"
+      - "traefik.http.services.bz.loadbalancer.server.port=80"
+      - "traefik.http.routers.bz.entrypoints=websecure"
+      - "traefik.http.routers.bz.tls=true"
+      - "traefik.http.routers.bz.middlewares=bz-stripprefix"
+      - "traefik.http.middlewares.bz-stripprefix.stripprefix.prefixes=/bz"
+      - "traefik.http.routers.bz.service=bz"
+      - "traefik.docker.network=bz_network"
+    networks:
+      - bz_network
+
+networks:
+  bz_network:
+    name: bz_network
+    external: true

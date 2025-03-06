@@ -1,0 +1,623 @@
+@app.task(bind=True, base=DatabaseTask, max_retries=10)
+def update_identity_from_camera(
+    self,
+    identity_id: int,
+    identity_first_name: str,
+    identity_photo: str,
+    identity_version: int,
+    identity_group: int,
+    camera_id: int,
+    camera_device_id: str,
+    camera_password: str,
+    tenant_id: int,
+    tenant_entity_id: int,
+):
+    db = self.get_db()
+    integration = db.query(Integrations).filter_by(tenant_id=tenant_id, module_id=1, is_active=True).first()
+    if integration:
+        callback_url = integration.identity_callback_url
+        if integration.auth_type.lower() in ["basic", "jwt"] and integration.username and integration.password:
+            auth = {"auth": integration.auth_type, "username": integration.username, "password": integration.password}
+        elif integration.token:
+            auth = {"auth": integration.auth_type, "token": integration.token, "token_type": integration.token_type}
+        else:
+            auth = None
+    else:
+        new_error = ErrorSmartCamera(
+            identity_id=identity_id,
+            smart_camera_id=camera_id,
+            error_type="smart_camera",
+            error_message="Integration not found",
+            error_code=404,
+            version=identity_version,
+        )
+        db.add(new_error)
+        db.commit()
+        db.refresh(new_error)
+        auth, callback_url = None, None
+    try:
+        url = f"http://{CAMERA_MANAGER_URL}/device/{camera_device_id}/user_management/updateUser?user_id={identity_id}"
+        payload_dict = {
+            "password": camera_password,
+            "image_type": "image",
+            "image_content": image_url_to_base64(str(identity_photo)),
+            "user_info": {"name": identity_first_name},
+            "group": identity_group,
+        }
+        payload = json.dumps(payload_dict)
+        response = requests.post(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            auth=(CAMERA_MANAGER_BASIC, CAMERA_MANAGER_PASSWORD),
+        )
+    except Exception as e:
+        data = {
+            "message_id": self.request.id,
+            "payload": {
+                "is_success": False,
+                "message": str(e),
+                "code": 400,
+                "type": "update",
+                "id": identity_id,
+                "identity_first_name": identity_first_name,
+                "version": identity_version,
+                "identity_group": identity_group,
+                "tenant_entity_id": tenant_entity_id,
+            },
+            "auth": auth,
+            "callback_url": callback_url,
+        }
+        return on_event(data)
+    if response.status_code != 200:
+        new_error = ErrorSmartCamera(
+            identity_id=identity_id,
+            smart_camera_id=camera_id,
+            error_type="smart_camera",
+            error_message=get_main_error_text(response),
+            error_code=response.status_code,
+            version=identity_version,
+        )
+        db.add(new_error)
+        db.commit()
+        db.refresh(new_error)
+        if is_retry(response):
+            self.retry(
+                exc=TaskError(f"Failed to update identity from smart camera: {get_main_error_text(response)}"),
+                countdown=3600,
+                max_retries=10,
+            )
+        data = {
+            "message_id": self.request.id,
+            "payload": {
+                "is_success": False,
+                "message": get_main_error_text(response),
+                "code": response.status_code,
+                "type": "update",
+                "id": identity_id,
+                "identity_first_name": identity_first_name,
+                "version": identity_version,
+                "identity_group": identity_group,
+                "tenant_entity_id": tenant_entity_id,
+            },
+            "auth": auth,
+            "callback_url": callback_url,
+        }
+        return on_event(data)
+    identity_scamera = (
+        db.query(IdentitySmartCamera)
+        .filter_by(identity_id=identity_id, smart_camera_id=camera_id, is_active=True)
+        .first()
+    )
+    if identity_scamera:
+        identity_scamera.version = identity_version
+        db.commit()
+        db.refresh(identity_scamera)
+    data = {
+        "message_id": self.request.id,
+        "payload": {
+            "is_success": True,
+            "message": "Identity updated from smart camera successfully",
+            "code": 200,
+            "type": "update",
+            "id": identity_id,
+            "identity_first_name": identity_first_name,
+            "version": identity_version,
+            "identity_group": identity_group,
+            "tenant_entity_id": tenant_entity_id,
+        },
+        "auth": auth,
+        "callback_url": callback_url,
+    }
+    return on_event(data)
+
+
+@mobile_router.get("/test/test/test")
+def get_test_data(db: Session = Depends(get_pg_db)):
+    attendances = (db.query(Attendance).options(selectinload(Attendance.spoofing))
+                   .filter(
+        and_(Attendance.tenant_entity_id == 6637,
+        Attendance.created_at > '2024-12-04',
+        Attendance.is_active)
+    ).all())
+    result = []
+    for attendance in attendances:
+        identity = db.query(Identity).filter_by(id=attendance.identity_id).first()
+        bucket_name, object_name = extract_minio_url(str(attendance.snapshot_url))
+        item = {
+            "identity_id": int(identity.external_id),
+            "identity_group": identity.identity_group,
+            "mtt_id": 4325100,
+            "group_id": identity.group_id,
+            "created_at": attendance.attendance_datetime.strftime("%Y-%m-%dT%H:%M:%S"),
+            "attendance_id": attendance.id,
+            "lat": attendance.lat,
+            "lon": attendance.lon,
+            "app_version": attendance.app_version_name,
+            "device_model": attendance.device_model,
+            "device_ip": attendance.device_ip,
+            "is_spoofed": attendance.spoofing.is_spoofed,
+            "spoofing_score": attendance.spoofing.score,
+            "spoofing_bucket": bucket_name,
+            "spoofing_object_name": object_name,
+            "tenant_id": 1
+        }
+        result.append(item)
+    return result
+
+
+@mobile_router.get("/test/some/test/test")
+def test1(db: Session = Depends(get_pg_db)):
+    users = db.query(User.id).filter_by(tenant_id=18, is_active=True).distinct().all()
+    for user in users:
+        tokens = db.query(AccessToken).filter_by(user_id=user.id).order_by(AccessToken.created_at).all()
+        if len(tokens) > 1:
+            max_code = tokens[0]
+            for _token in tokens[1:]:
+                if _token.app_version_code > max_code.app_version_code:
+                    max_code = _token
+                elif _token.app_version_code < max_code.app_version_code:
+                    print(user.id)
+                    break
+    return {"success": True}
+
+@mobile_router.get("/test/some/test/test")
+def test1(db: Session = Depends(get_pg_db)):
+    print("start")
+    for user_id in invalid_users:
+        tokens = db.query(AccessToken).filter_by(user_id=user_id).order_by(AccessToken.created_at).all()
+        token_data = {}
+        for token in tokens:
+            if not token.app_version_code: continue
+            if token.device_name not in token_data:
+                token_data[token.device_name] = token.app_version_code
+                continue
+            if token.app_version_code > token_data[token.device_name]:
+                token_data[token.device_name] = token.app_version_code
+                continue
+            if token.app_version_code < token_data[token.device_name]:
+                print(user_id)
+                break
+        token_data.clear()
+    return {"success": True}
+
+
+@mobile_router.get("/attendance_report/test/test")
+def test_get_attendance_report(db: Session = Depends(get_pg_db)):
+    wb = load_workbook('visits_moderation.xlsx')
+    ws = wb.active
+
+    i = 0
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        i += 1
+        report = db.query(AttendanceReport).filter_by(id=row[0], is_active=True).first()
+        if report.user_id:
+            attendance = db.query(Attendance).filter_by(id=report.attendance_id, is_active=True).first()
+            user = db.query(User).filter_by(id=report.user_id, is_active=True).first()
+            if not attendance:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Attendance not found")
+            new_report = AttendanceReport(
+                user_id=report.user_id,
+                attendance_id=report.attendance_id,
+                tenant_entity_id=attendance.tenant_entity_id,
+                description=report.description,
+                app_version_code=report.app_version_code,
+                app_version_name=report.app_version_name,
+                device_id=report.device_id,
+                device_ip=report.device_ip,
+                device_name=report.device_name,
+                device_model=report.device_model,
+            )
+            db.add(new_report)
+            db.commit()
+            db.refresh(new_report)
+            start_time = datetime.now()
+            r = requests.post(
+                url=NODAVLAT_BOGCHA_BASE_URL + "visits/kids/moderation",
+                headers=BASIC_AUTH,
+                json={
+                    "id": new_report.id,
+                    "kid_id": int(attendance.identity.external_id),
+                    "mtt_id": user.tenant_entity.external_id,
+                    "visit_date": attendance.attendance_datetime.strftime("%Y-%m-%d"),
+                    "bucket": attendance.bucket_name,
+                    "object_name": attendance.object_name,
+                    "description": report.description,
+                    "attendance_id": report.attendance_id,
+                    "tenant_id": attendance.tenant_id,
+                    "identity_group": attendance.identity.identity_group,
+                },
+                timeout=5,
+            )
+            end_time = datetime.now()
+            print(f"spent_time(send_attendance_report): {(end_time - start_time).total_seconds():.2f} s")
+            if r.status_code != 200:
+                db.delete(new_report)
+                db.commit()
+        print(i)
+    return {"success": True, "message": None}
+
+
+@mobile_router.get("/all", response_model=List[IdentitySelect], description="Get all without pagination")
+def get_identities_without_pagination(
+    use_cache: bool = False,
+    db: Session = Depends(get_pg_db),
+    user=Security(get_tenant_entity_user_2),
+    redis_client=Depends(get_redis_connection),
+):
+    cache_key = f"identity:{user.tenant_entity_id}:no_pagination"
+    if use_cache:
+        cached_data = get_from_redis(redis_client, cache_key)
+        if cached_data:
+            return cached_data
+
+    kids = db.query(Identity).filter_by(tenant_entity_id=user.tenant_entity_id, identity_group=0, is_active=True).al
+    staffs = (
+        db.query(Identity)
+        .options(selectinload(Identity.extra_attendances))
+        .filter_by(tenant_entity_id=user.tenant_entity_id, identity_group=1, is_active=True)
+        .all()
+    )
+
+    kids_result = [IdentitySelect.model_validate(identity) for identity in kids]
+    staffs_result = [IdentitySelect.model_validate(identity) for identity in staffs]
+    for i in range(len(staffs_result)):
+        photo = (
+            db.query(IdentityPhoto)
+            .filter(IdentityPhoto.identity_id == staffs[i].id, IdentityPhoto.is_active)
+            .order_by(IdentityPhoto.created_at.desc())
+            .first()
+        )
+        if photo and staffs_result[i].id == staffs[i].id:
+            verification_result = (
+                1
+                if photo.passport_verification_result is True
+                else 2
+                if photo.passport_verification_result is False
+                else 0
+            )
+            staffs_result[i].passport_verification_result = verification_result
+    result = staffs_result + kids_result
+    if use_cache:
+        set_to_redis(redis_client, cache_key, result)
+    return result
+
+
+@mobile_router.get("/all", response_model=List[IdentitySelect], description="Get all without pagination")
+def get_identities_without_pagination(
+    use_cache: bool = False,
+    db: Session = Depends(get_pg_db),
+    user=Security(get_tenant_entity_user_2),
+    redis_client=Depends(get_redis_connection),
+):
+    cache_key = f"identity:{user.tenant_entity_id}:no_pagination"
+    if use_cache:
+        cached_data = get_from_redis(redis_client, cache_key)
+        if cached_data:
+            return cached_data
+
+    subquery_last_photo = (
+        db.query(
+            IdentityPhoto.identity_id.label("identity_id"),
+            func.max(IdentityPhoto.id).label("max_photo_id"),
+        )
+        .join(Identity, Identity.id == IdentityPhoto.identity_id)
+        .filter_by(identity_group=1, is_active=True)
+        .group_by(IdentityPhoto.identity_id)
+        .subquery()
+    )
+
+    identities = (
+        db.query(Identity, IdentityPhoto)
+        .filter_by(tenant_entity_id=user.tenant_entity_id, is_active=True)
+        .outerjoin(
+            subquery_last_photo,
+            Identity.id == subquery_last_photo.c.identity_id,
+        )
+        .outerjoin(
+            IdentityPhoto,
+            and_(
+                IdentityPhoto.id == subquery_last_photo.c.max_photo_id,
+                IdentityPhoto.is_active,
+            ),
+        )
+        .options(selectinload(Identity.extra_attendances))
+        .all()
+    )
+
+    identities_result = []
+    for identity, photo in identities:
+        if photo and identity.identity_group == 1:
+            if photo.passport_verification_result is True:
+                verification_result = 1
+            elif photo.passport_verification_result is False:
+                verification_result = 2
+            else:
+                verification_result = 0
+            identity.passport_verification_result = verification_result
+        identities_result.append(IdentitySelect.model_validate(identity))
+    if use_cache:
+        set_to_redis(redis_client, cache_key, identities_result)
+    return identities_result
+
+
+# @router.get("/delete/duplicate/identities")
+# def delete_duplicate_identities(db: Session = Depends(get_pg_db)):
+#     identities = (
+#         db.query(Identity).filter(
+#             and_(
+#                 Identity.is_active.is_(False),
+#                 Identity.deleted.is_(False),
+#                 Identity.tenant_id == 1,
+#                 Identity.identity_group == 1,
+#             )
+#         )
+#         .all()
+#     )
+#     print(len(identities))
+#     ids = [identity.id for identity in identities]
+#     db.query(Identity).filter(Identity.id.in_(ids)).update({"deleted": True}, synchronize_session=False)
+#     db.commit()
+
+@router.get("/temp/attendance/send/difference/platon")
+def send_temp_attendance_to_platon(
+    visit_date: datetime = Query(..., alias="visit_date"),
+    db: Session = Depends(get_pg_db),
+    tenant_admin=Security(get_current_tenant_admin)
+):
+    tenant_entities = (
+        db.query(TenantEntity.id, TenantEntity.external_id)
+        .filter_by(tenant_id=tenant_admin.tenant_id, is_active=True)
+        .all()
+    )
+    i = 0
+    for tenant_entity in tenant_entities:
+        i += 1
+        if i < 11000: continue
+        if i % 1000 == 0: print(i)
+        r = requests.get(
+            url=NODAVLAT_BASE_URL + "api/v1/realsoftai/mtt/visits",
+            headers=BASIC_AUTH,
+            params={"mtt_id": tenant_entity.external_id, "visit_date": visit_date.strftime("%Y-%m-%d")},
+        )
+        if r.status_code != 200:
+            print(f"id: {tenant_entity.id} visit_date: {visit_date}, status_code: {r.status_code}, text: {r.text}, failed")
+        remote_data = r.json()["data"]
+        remote_data = remote_data["kids"] + remote_data["edus"]
+        data = (
+            db.query(Attendance)
+            .options(joinedload(Attendance.identity))
+            .options(selectinload(Attendance.spoofing))
+            .options(joinedload(Attendance.package))
+            .filter(
+                and_(
+                    Attendance.tenant_entity_id == tenant_entity.id,
+                    Attendance.attendance_datetime >= visit_date,
+                    Attendance.attendance_datetime < visit_date + timedelta(days=1),
+                )
+            )
+            .distinct(Attendance.identity_id)
+            .all()
+        )
+        remote_kid_ids = [item["kid_id"] for item in remote_data]
+        new_data = [item for item in data if int(item.identity.external_id) not in remote_kid_ids]
+        if not new_data:
+            continue
+
+        data_kids = []
+        data_edus = []
+        for attendance in new_data:
+            item = {
+                "identity_id": int(attendance.identity.external_id),
+                "identity_group": attendance.identity.identity_group,
+                "mtt_id": tenant_entity.external_id,
+                "group_id": attendance.identity.group_id,
+                "created_at": attendance.attendance_datetime.strftime("%Y-%m-%dT%H:%M:%S"),
+                "attendance_id": attendance.id,
+                "position_id": attendance.position_id,
+                "lat": attendance.lat,
+                "lon": attendance.lon,
+                "app_version": attendance.app_version_name,
+                "device_model": attendance.device_model,
+                "device_ip": attendance.device_ip,
+                "is_spoofed": attendance.spoofing.is_spoofed if attendance.spoofing else False,
+                "spoofing_score": attendance.spoofing.score if attendance.spoofing else 0,
+                "spoofing_bucket": attendance.bucket_name,
+                "spoofing_object_name": attendance.object_name,
+                "tenant_id": attendance.tenant_id,
+            }
+            if attendance.identity.identity_group == 0:
+                data_kids.append(item)
+            else:
+                data_edus.append(item)
+        sent_count = 0
+        try:
+            r1 = requests.post(
+                url="https://mq.nodavlat-bogcha.uz/api/call/v4/kindergartens/kids_visits_batch_test",
+                headers=BASIC_AUTH,
+                json={"identity_group": 1, "tenant_id": tenant_admin.tenant_id, "results": data_edus},
+            )
+            if r1.status_code != 200:
+                print(f"id: {tenant_entity.id}, identity_group: 1, count: {len(data_edus)}, FAILED POST")
+            else:
+                sent_count += len(data_edus)
+
+            r2 = requests.post(
+                url="https://mq.nodavlat-bogcha.uz/api/call/v4/kindergartens/kids_visits_batch_test",
+                headers=BASIC_AUTH,
+                json={"identity_group": 0, "tenant_id": tenant_admin.tenant_id, "results": data_kids},
+            )
+            if r2.status_code != 200:
+                print(f"id: {tenant_entity.id}, identity_group: 0, count: {len(data_kids)}, FAILED POST")
+            else:
+                sent_count += len(data_kids)
+            print(f"row: {i}, id: {tenant_entity.id}, sent_count: {sent_count}")
+        except Exception as e:
+            print("Failed to send attendance difference: " + str(e))
+
+
+# @app.task(bind=True, queue="send_express_attendance_queue")
+# def send_express_attendance_task(self, data: dict):
+#     try:
+#         start_time = datetime.now()
+#         r = requests.post(
+#             url="https://mq.nodavlat-bogcha.uz/api/call/v4/kindergartens/kids_visits",
+#             json={"status": "SUCCESS", "result": data},
+#             timeout=10,
+#         )
+#         end_time = datetime.now()
+#         print(f"spent_time(send_express_attendance_task): {(end_time - start_time).total_seconds():.2f} s")
+#         if r.status_code != 200:
+#             print(f"Failed to send express attendance({r.status_code}): " + r.text)
+#     except Exception as e:
+#         print(f"Failed to send express attendance: {e}")
+
+
+@mobile_router.get("/attendance_report/test/test")
+def test_get_attendance_report(db: Session = Depends(get_pg_db)):
+    rpl = [18292, 18311, 18305, 18317, 18320, 18321, 18335, 18337, 18338, 18339, 18340, 18348, 18363, 18368, 18378,
+           18376, 18398, 18400, 18359, 18416, 18422, 18426, 18432, 18439, 18484, 18508, 18520, 18522, 18554, 18575,
+           18555, 18569, 18646, 18803, 18808, 18813, 18815, 18826, 18835, 18836, 18850, 18855, 18865, 18870, 18880,
+           18882, 18885, 18896, 18894, 18874, 18898, 18909, 18917, 18916, 18920, 18943, 18944, 18942, 18971, 18974,
+           18965, 18976, 18957, 19002, 19005, 19031, 19073, 19097, 19098, 19099, 19101, 19142, 19180, 19218, 19269,
+           19307, 19331, 19349, 19351, 18289, 18284, 18296, 18314, 18322, 18325, 18316, 18318, 18319, 18327, 18326,
+           18331, 18354, 18355, 18347, 18384, 18388, 18410, 18411, 18413, 18445, 18455, 18585, 18482, 18456, 18823,
+           18902, 18515, 18629, 18588, 18863, 18904, 18862, 18866, 18878, 18907, 18923, 18937, 18945, 18958, 18956,
+           19230, 19047, 19059, 19290, 19257, 18875, 19104, 19279, 19285, 19375, 19144, 19874, 19877, 19883, 19882,
+           19886, 19900, 19896, 19892, 19936, 19940, 19942, 19943, 19939, 20007, 20059, 20134, 20351, 20403, 20496,
+           20470, 19836, 19932, 19954, 19924, 19926, 19945, 20005, 20153, 19916, 20096, 19844, 19849, 19846, 19847,
+           20045, 19851, 19853, 19854, 19858, 19969, 20004, 20083, 20043, 19865, 19917, 19879, 20020, 20029, 20040,
+           19901, 19930, 20049, 20098, 19972, 19974, 20118, 20141, 19966, 20054, 19985, 20033, 20037, 20101, 20185,
+           20270, 20295, 20248, 20271, 20290, 20498, 20406, 20534, 20446, 20559, 20968, 20963, 20973, 20979, 20983,
+           21038, 21022, 21024, 21026, 21027, 21031, 21087, 21068, 21086, 21107, 21114, 21115, 21117, 21118, 21119,
+           21121, 21123, 21124, 21126, 21128, 21130, 21135, 21137, 21138, 21140, 21142, 21143, 21146, 21147, 21149,
+           21156, 21165, 21158, 21160, 21161, 21162, 21163, 21164, 21166, 21172, 21180, 21182, 21184, 21186, 21191,
+           21194, 21208, 21113, 21230, 21237, 21238, 21254, 21256, 21269, 21271, 21296, 21311, 21324, 21335, 21340,
+           21367, 21376, 21377, 21378, 21379, 21380, 21381, 21382, 21383, 21384, 21386, 21387, 21388, 21389, 21391,
+           21393, 21394, 21395, 21426, 21427, 21431, 21435, 21451, 21481, 21488, 21500, 21506, 21507, 21518, 21521,
+           21568, 21644, 21836, 21867, 21873, 21875, 21877, 21878, 21879, 21884, 21885, 21886, 21887, 21888, 21945,
+           21947, 21959, 21950, 21948, 21954, 21955, 21964, 21958, 21961, 21944, 21986, 21991, 21993, 21995, 22002,
+           22014, 22005, 22008, 22013, 22016, 22019, 22020, 22030, 22040, 22043, 22055, 22058, 22046, 20924, 20923,
+           20957, 20958, 20959, 20960, 20961, 21016, 20970, 21050, 21060, 20977, 21002, 21072, 21077, 21034, 21075,
+           21074, 21076, 23136, 23946, 24429, 24810, 26040, 18509, 21392, 18978, 18975]
+
+    i = 0
+    for report_id in rpl:
+        i += 1
+        report = db.query(AttendanceReport).filter_by(id=report_id, is_active=True).first()
+        if report.user_id:
+            attendance = db.query(Attendance).filter_by(id=report.attendance_id, is_active=True).first()
+            user = db.query(User).filter_by(id=report.user_id, is_active=True).first()
+            if not attendance:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Attendance not found")
+            start_time = datetime.now()
+            r = requests.post(
+                url=NODAVLAT_BOGCHA_BASE_URL + "visits/kids/moderation",
+                headers=BASIC_AUTH,
+                json={
+                    "id": report.id,
+                    "kid_id": int(attendance.identity.external_id),
+                    "mtt_id": user.tenant_entity.external_id,
+                    "visit_date": attendance.attendance_datetime.strftime("%Y-%m-%d"),
+                    "bucket": attendance.bucket_name,
+                    "object_name": attendance.object_name,
+                    "description": report.description,
+                    "attendance_id": report.attendance_id,
+                    "tenant_id": attendance.tenant_id,
+                    "identity_group": attendance.identity.identity_group,
+                },
+                timeout=5,
+            )
+            end_time = datetime.now()
+            print(f"spent_time(send_attendance_report): {(end_time - start_time).total_seconds():.2f} s")
+            if r.status_code != 200:
+                print(f"Failed to send report({report_id}): {r.status_code}, text: {r.text}")
+        print(i)
+    return {"success": True, "message": None}
+
+
+@router.get("/notify/all/users")
+def notify_all_users(
+    district_id: int, db: Session = Depends(get_pg_db), tenant_admin=Security(get_current_tenant_admin)
+):
+    users = (
+        db.query(User.id)
+        .join(TenantEntity, User.tenant_entity_id == TenantEntity.id)
+        .filter(
+            and_(
+                User.tenant_id == tenant_admin.tenant_id,
+                TenantEntity.district_id == district_id,
+                TenantEntity.is_active,
+                User.is_active,
+            )
+        )
+        .all()
+    )
+    message_title = "Мерчант белгилаш!"
+    message_body = (
+        "Дастурда ота оналар тўлов миқдорини киритиш, тўловларни бириктириш имконияти ишлаб чиқилган бўлиб,"
+        " Сизлардан 2025 йил 1 январдан бошлаб МТТ даги тарбияланувчиларнинг бадал суммаларини ҳисоблаш ва "
+        "тўлов суммалари киритиш тўғрисида хабар берилган эди.(https://t.me/nmttbat/576)\n\n"
+        "Комиссионер маълумотларини my3.soliq.uz дастурига киритишда Маркетплейс танламаган "
+        "МТТ лардан маълумотларни тахрирлашни сўраймиз."
+    )
+    sent_count = 0
+    for user in users:
+        new_notification = Notification(
+            sender_id=tenant_admin.id,
+            sender_type="tenant_admin",
+            receiver_id=user.id,
+            receiver_type="user",
+            title=message_title,
+            body=message_body,
+            data={"external_link": "https://t.me/nmttbat/576"},
+        )
+        db.add(new_notification)
+        db.commit()
+        db.refresh(new_notification)
+        fcm_tokens = (
+            db.query(UserFCMToken)
+            .filter_by(user_id=user.id, is_active=True)
+            .order_by(UserFCMToken.created_at.desc())
+            .limit(3)
+            .all()
+        )
+        is_sent_list = []
+        if fcm_tokens:
+            for fcm_token in fcm_tokens:
+                is_sent = notification_service_one_system.send_notification(
+                    token=fcm_token.token,
+                    message_title=message_title,
+                    message_body=message_body,
+                    data={"external_link": "https://t.me/nmttbat/576"},
+                )
+                is_sent_list.append(is_sent)
+        else:
+            print("FCM token not found")
+        new_notification.attempt_count += 1
+        is_sent = any(is_sent_list)
+        if is_sent:
+            new_notification.is_sent_via_one_system = True
+            db.commit()
+            sent_count += 1
+    return {"success": True, "message": f"Notification sent to {sent_count} users", "users_count": len(users)}

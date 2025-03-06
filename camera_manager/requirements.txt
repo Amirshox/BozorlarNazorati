@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic==1.10.4
+python-multipart==0.0.5
+aiofiles==22.1.0
+websockets
+requests
+celery
+redis
+sentry-sdk[fastapi]
+Pillow
+gunicorn
+loguru
+apscheduler
+starlette
+pytz

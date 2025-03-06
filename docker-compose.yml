@@ -1,0 +1,323 @@
+services:
+  fastapi:
+    container_name: bn_fastapi
+    restart: always
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api-bz.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.api-bz.rule=Host(`api-bz.realsoft.ai`)"
+      - "traefik.http.services.api-bz.loadbalancer.server.port=8008"
+      - "traefik.http.routers.api-bz.entrypoints=websecure"
+      - "traefik.http.routers.api-bz.tls=true"
+      - "traefik.http.routers.api-bz.middlewares=api-bz-stripprefix"
+      - "traefik.http.middlewares.api-bz-stripprefix.stripprefix.prefixes=/api-bz"
+      - "traefik.http.routers.api-bz.service=api-bz"
+      - "traefik.docker.network=bz_network"
+    build:
+      context: backend/
+      dockerfile: Dockerfile
+    ports:
+      - "8408:8008"
+    depends_on:
+      - mongo
+      - redis
+      - rabbitmq
+      - minio-hdd
+      - minio-ssd
+      - postgresql
+    command: bash -c "alembic upgrade head && gunicorn -b 0.0.0.0:8008  -w 10 -t 120 -k uvicorn.workers.UvicornWorker main:app --max-requests 250 --max-requests-jitter 50 --access-logfile -"
+    env_file:
+      - .backend.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - bz_network
+
+  celery:
+    container_name: bz_celery
+    restart: always
+    labels:
+      - "traefik.enable=false"
+    build:
+      context: backend/
+      dockerfile: Dockerfile
+    depends_on:
+      - mongo
+      - redis
+      - rabbitmq
+      - minio-hdd
+      - minio-ssd
+      - postgresql
+    command: bash -c "celery -A tasks worker --concurrency=10 --loglevel=info"
+    env_file:
+      - .backend.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - bz_network
+
+  cron_celery:
+    container_name: bz_cron_celery
+    restart: always
+    build:
+      context: backend/
+      dockerfile: Dockerfile
+    depends_on:
+      - mongo
+      - redis
+      - rabbitmq
+      - minio-hdd
+      - minio-ssd
+      - postgresql
+    command: bash -c "celery -A tasks beat --loglevel=info"
+    labels:
+      - "traefik.enable=false"
+    env_file:
+      - .backend.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - bz_network
+
+  camera_manager:
+    container_name: bz_camera_manager
+    restart: always
+    hostname: camera_manager
+    build:
+      context: camera_manager/
+      dockerfile: Dockerfile
+    depends_on:
+      - mongo
+      - redis
+      - rabbitmq
+      - minio-hdd
+      - minio-ssd
+      - postgresql
+    command: bash -c "uvicorn main:app --host 0.0.0.0 --port 8010  --ws-ping-interval 1200 --ws-ping-timeout 1200"
+    ports:
+      - "8470:8010"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.scamera-bz.rule=Host(`scamera-bz.realsoft.ai`)"
+      - "traefik.http.services.scamera-bz.loadbalancer.server.port=8010"
+      - "traefik.http.routers.scamera-bz.entrypoints=websecure"
+      - "traefik.http.routers.scamera-bz.tls=true"
+      - "traefik.http.routers.scamera-bz.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.scamera-bz.middlewares=scamera-bz-stripprefix"
+      - "traefik.http.middlewares.scamera-bz-stripprefix.stripprefix.prefixes=/scamera-bz"
+      - "traefik.http.routers.scamera-bz.service=scamera-bz"
+      - "traefik.docker.network=bz_network"
+    networks:
+      - bz_network
+
+  websocket:
+    container_name: bz_websocket
+    restart: always
+    hostname: websocket
+    build:
+      context: backend/socket/
+      dockerfile: Dockerfile
+    depends_on:
+      - mongo
+      - redis
+      - rabbitmq
+      - minio-hdd
+      - minio-ssd
+      - postgresql
+    ports:
+      - "8411:8011"
+    networks:
+      - bz_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.websocket-bz.rule=Host(`websocket-bz.realsoft.ai`)  && PathPrefix(`/ws/`) && Path(`/ws/{number:[0-9]+}`)"
+      - "traefik.http.routers.websocket-bz.entrypoints=websecure"
+      - "traefik.http.routers.websocket-bz.tls=true"
+      - "traefik.http.routers.websocket-bz.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.websocket-bz_http.rule=Host(`websocket-bz.realsoft.ai`)"
+      - "traefik.http.services.websocket-bz.loadbalancer.server.port=8011"
+      - "traefik.http.routers.websocket-bz_http.entrypoints=websecure"
+      - "traefik.http.routers.websocket-bz_http.tls=true"
+      - "traefik.http.routers.websocket-bz_http.tls.certresolver=letsencrypt"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.rate-limiter.ratelimit.average=100"
+      - "traefik.http.middlewares.rate-limiter.ratelimit.burst=200"
+
+  postgresql:
+    container_name: bz_postgresql
+    image: postgres:16
+    command: postgres -c max_connections=200 -c shared_buffers=1GB
+    hostname: postgresql
+    shm_size: '1gb'
+    ports:
+      - "8432:5432"
+    volumes:
+      - /data/minio_ssd/one_system_bz/db_volume:/var/lib/postgresql/data/
+    labels:
+      - "traefik.enable=false"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: udenstinti
+      POSTGRES_DB: bz_db
+      TZ: Asia/Tashkent
+    networks:
+      - bz_network
+
+  rabbitmq:
+    container_name: bz_rabbitmq
+    image: rabbitmq:3-management
+    hostname: rabbitmq
+    ports:
+      - '8672:5672'
+      - '18672:15672'
+    labels:
+      - "traefik.enable=false"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: iveriermal
+      MAX_MSG_SIZE: 400000000
+      TZ: Asia/Tashkent
+    networks:
+      - bz_network
+
+  minio-hdd:
+    container_name: bz_minio_hdd
+    image: minio/minio
+    hostname: minio-hdd
+    ports:
+      - '8800:9000'
+      - '8890:9090'
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: trateitere
+    volumes:
+      - /data/minio_hdd/one_system_bz/minio_volume:/data
+    command: server /data --console-address ":9090"
+    labels:
+      - "traefik.enable=true"
+      # Routing for MinIO API (S3)
+      - "traefik.http.routers.s3-hdd-bz.rule=Host(`s3-hdd-bz.realsoft.ai`)"
+      - "traefik.http.routers.s3-hdd-bz.service=s3-hdd-bz-svc"
+      - "traefik.http.routers.s3-hdd-bz.entrypoints=websecure"
+      - "traefik.http.routers.s3-hdd-bz.tls.certresolver=letsencrypt"
+      - "traefik.http.services.s3-hdd-bz-svc.loadbalancer.server.port=9000"
+      # Routing for MinIO Console
+      - "traefik.http.routers.console-hdd-bz.rule=Host(`console-hdd-bz.realsoft.ai`)"
+      - "traefik.http.routers.console-hdd-bz.service=console-hdd-bz-svc"
+      - "traefik.http.routers.console-hdd-bz.entrypoints=websecure"
+      - "traefik.http.routers.console-hdd-bz.tls.certresolver=letsencrypt"
+      - "traefik.http.services.console-hdd-bz-svc.loadbalancer.server.port=9090"
+    networks:
+      - bz_network
+
+  minio-ssd:
+    container_name: bz_minio_ssd
+    image: minio/minio
+    hostname: minio-ssd
+    ports:
+      - '8900:9000'
+      - '8990:9090'
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: actrasyche
+    volumes:
+      - /data/minio_ssd/one_system_bz/minio_volume:/data
+    labels:
+      - "traefik.enable=true"
+      # Routing for MinIO API (S3)
+      - "traefik.http.routers.s3-ssd-bz.rule=Host(`s3-ssd-bz.realsoft.ai`)"
+      - "traefik.http.routers.s3-ssd-bz.service=s3-ssd-bz-svc"
+      - "traefik.http.routers.s3-ssd-bz.entrypoints=websecure"
+      - "traefik.http.routers.s3-ssd-bz.tls.certresolver=letsencrypt"
+      - "traefik.http.services.s3-ssd-bz-svc.loadbalancer.server.port=9000"
+      # Routing for MinIO Console
+      - "traefik.http.routers.console-ssd-bz.rule=Host(`console-ssd-bz.realsoft.ai`)"
+      - "traefik.http.routers.console-ssd-bz.service=console-ssd-bz-svc"
+      - "traefik.http.routers.console-ssd-bz.entrypoints=websecure"
+      - "traefik.http.routers.console-ssd-bz.tls.certresolver=letsencrypt"
+      - "traefik.http.services.console-ssd-bz-svc.loadbalancer.server.port=9090"
+    command: server /data --console-address ":9090"
+    networks:
+      - bz_network
+
+  redis:
+    container_name: bz_redis
+    image: "redis:alpine"
+    labels:
+      - "traefik.enable=false"
+    ports:
+      - "8379:6379"
+    volumes:
+      - /data/minio_ssd/one_system_bz/redis_volume:/data
+    hostname: redis
+    command: redis-server
+    networks:
+      - bz_network
+
+  hls:
+    container_name: bz_hls
+    image: "roverr/rtsp-stream:2"
+    ports:
+      - "8880:8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.hls-bz.rule=Host(`hls-bz.realsoft.ai`)"
+      - "traefik.http.routers.hls-bz.entrypoints=websecure"
+      - "traefik.http.routers.hls-bz.tls=true"
+      - "traefik.http.routers.hls-bz.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.hls-bz.middlewares=hls-bz-stripprefix"
+      - "traefik.http.middlewares.hls-bz-stripprefix.stripprefix.prefixes=/hls-bz"
+      - "traefik.http.routers.hls-bz.service=hls-bz"
+      - "traefik.http.services.hls-bz.loadbalancer.server.port=8080"
+      - "traefik.docker.network=bz_network"
+    networks:
+      - bz_network
+
+  srs:
+    container_name: bz_srs
+    image: ossrs/srs:5
+    ports:
+      - "8935:1935"  # RTMP
+      - "8980:8080"  # HTTP
+    command: ./objs/srs -c conf/hls.conf
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.srs-bz.rule=Host(`srs-bz.realsoft.ai`)"
+      - "traefik.http.routers.srs-bz.entrypoints=websecure"
+      - "traefik.http.routers.srs-bz.tls=true"
+      - "traefik.http.routers.srs-bz.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.srs-bz.middlewares=srs-bz-stripprefix"
+      - "traefik.http.middlewares.srs-bz-stripprefix.stripprefix.prefixes=/srs-bz"
+      - "traefik.http.routers.srs-bz.service=srs-bz"
+      - "traefik.http.services.srs-bz.loadbalancer.server.port=8080"
+      - "traefik.docker.network=bz_network"
+      - "traefik.http.routers.srs-bz-http.rule=Host(`srs-bz.realsoft.ai`)"
+    networks:
+      - bz_network
+
+  mongo:
+    container_name: bz_mongo
+    image: mongo
+    hostname: mongo
+    restart: always
+    labels:
+      - "traefik.enable=false"
+    ports:
+      - '28017:27017'
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: pheritlens
+    volumes:
+      - /data/minio_ssd/one_system_bz/mongo_volume:/data/db
+    networks:
+      - bz_network
+
+
+
+networks:
+  bz_network:
+    name: bz_network
+    external: true
+
+
