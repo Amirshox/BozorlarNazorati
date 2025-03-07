@@ -18,11 +18,7 @@ RABBIT_MQ_PORT = int(os.getenv("RABBIT_MQ_PORT", 5678))
 RABBIT_MQ_USERNAME = os.getenv("RABBIT_MQ_USER", "guest")
 RABBIT_MQ_PASSWORD = os.getenv("RABBIT_MQ_PASSWORD", "guest")
 
-# DATABASE_URL = os.getenv("POSTGRESS_URL2")  # or other relevant config var
-DATABASE_URL = "postgres://admin:pOlaIndCulAv@postgresql2:5432/one_system_db"
-# DATABASE_URL = "postgres://admin:admin@10.3.7.131:5439/one_system_db"
-# DATABASE_URL = "postgres://admin:admin@10.3.7.131:6432/one_system_db"
-# DATABASE_URL = "postgres://admin:admin@pgbouncer:5432/one_system_db"
+DATABASE_URL = os.getenv("POSTGRESQL_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
