@@ -19,7 +19,7 @@ load_dotenv(find_dotenv())
 config = context.config
 fileConfig(config.config_file_name)
 
-DATABASE_URL = os.getenv("POSTGRESS_URL2")  # or other relevant config var
+DATABASE_URL = os.getenv("POSTGRESQL_URL")  # or other relevant config var
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
