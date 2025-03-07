@@ -15,7 +15,7 @@ from models import (
 from models.identity import Package
 from schemas.identity import IdentityCreate, IdentityUpdate
 from services.face_auth import verify_insight_face_async
-from tasks import check_similarity_main_photo, check_similarity_main_photo_in_entity, send_updated_identity_photo_task
+from tasks import send_updated_identity_photo_task
 from utils.image_processing import extract_minio_url
 from utils.kindergarten import get_birth_date_from_pinfl
 
@@ -274,26 +274,6 @@ def update_identity(db: Session, tenant_id, pk: int, identity_data: IdentityUpda
             birth_date = get_birth_date_from_pinfl(identity.pinfl)
             verify_insight_face_async(
                 new_identity_photo.id, identity.pinfl, datetime.fromisoformat(birth_date), identity.photo
-            )
-        if identity.photo and identity.embedding512:
-            check_similarity_main_photo.delay(
-                identity.id,
-                identity.photo,
-                eval(identity.embedding512),
-                datetime.now().isoformat(),
-                identity.tenant_entity.lat,
-                identity.tenant_entity.lon,
-                identity.version,
-            )
-            check_similarity_main_photo_in_entity.delay(
-                identity.id,
-                identity.tenant_entity_id,
-                identity.photo,
-                eval(identity.embedding512),
-                datetime.now().isoformat(),
-                identity.tenant_entity.lat,
-                identity.tenant_entity.lon,
-                identity.version,
             )
     identity.is_active = True
     db.commit()
